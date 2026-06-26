@@ -1,0 +1,13 @@
+# Dependency directories
+gateway/node_modules/
+node_modules/
+chaincode/vendor/
+
+# Local/temporary files
+clean.sh
+.idea/
+.vscode/
+*.log
+*.tar.gz
+temp/
+tmp/

@@ -166,25 +166,19 @@ window.addEventListener("DOMContentLoaded", () => {
   if (nodes.police) {
     nodes.police.addEventListener("click", () => {
       setActiveNode("police");
-      if (activeCustodian === "PoliceDept" && activeEvidenceId) {
-        openHandoffPanel("PoliceDept");
-      }
+      document.getElementById("section-history")?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
   }
   if (nodes.lab) {
     nodes.lab.addEventListener("click", () => {
       setActiveNode("lab");
-      if (activeCustodian === "ForensicLab" && activeEvidenceId) {
-        openHandoffPanel("ForensicLab");
-      }
+      document.getElementById("section-certificate")?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
   }
   if (nodes.court) {
     nodes.court.addEventListener("click", () => {
       setActiveNode("court");
-      if (activeCustodian === "JudicialCourt" && activeEvidenceId) {
-        openHandoffPanel("JudicialCourt");
-      }
+      // AI Analytics locked state
     });
   }
 });

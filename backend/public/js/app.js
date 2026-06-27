@@ -301,6 +301,9 @@ pipelineBtn.addEventListener("click", async () => {
       qrCodeHtml
     ].join("\n"));
 
+    // Cross-reference evidence to discover hidden link overlaps using similarity service
+    fetchSmartMatches(activeEvidenceId, pipelineOutput);
+
     // Enable and show Handoff options
     openHandoffPanel("PoliceDept", true);
     fetchEvidenceHistory(activeEvidenceId);
@@ -448,6 +451,67 @@ async function fetchEvidenceHistory(evidenceId) {
   }
 }
 
+/**
+ * Cross-references evidence with existing records via Cosine Similarity to find hidden case links.
+ */
+async function fetchSmartMatches(evidenceId, outputElement) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/ai/smart-match/${evidenceId}`);
+    if (!res.ok) return;
+
+    const data = await res.json();
+    if (!data.matches || data.matches.length === 0) {
+      const noMatchHtml = `
+        <div style="margin-top: 15px; border-top: 1px dashed rgba(255,255,255,0.1); padding-top: 10px;">
+          <div style="color: var(--text-secondary); font-size: 0.72rem; display: flex; align-items: center; gap: 6px;">
+            <span>🔍</span>
+            <span style="font-family: var(--font-mono); font-weight: 500;">SENTINEL LINK ANALYSIS:</span>
+            <span style="color: var(--text-muted);">No matching case patterns or metadata overlaps found.</span>
+          </div>
+        </div>
+      `;
+      outputElement.innerHTML += noMatchHtml;
+      return;
+    }
+
+    let matchesHtml = `
+      <div style="margin-top: 15px; border-top: 1px dashed rgba(6, 182, 212, 0.3); padding-top: 10px;">
+        <div style="color: var(--neon-cyan); font-size: 0.75rem; font-weight: 700; display: flex; align-items: center; gap: 6px; text-transform: uppercase; margin-bottom: 8px;">
+          <span>🔍</span>
+          <span style="font-family: var(--font-mono);">SENTINEL Smart Match (Cosine Similarity Overlaps)</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+    `;
+
+    data.matches.slice(0, 3).forEach(match => {
+      const percentage = Math.round(match.score * 100);
+      const keywords = match.overlappingKeywords.join(', ');
+      
+      matchesHtml += `
+        <div style="background: rgba(6, 182, 212, 0.05); border: 1px solid rgba(6, 182, 212, 0.15); border-radius: 4px; padding: 10px; font-size: 0.7rem; color: #ffffff;">
+          <div style="display: flex; justify-content: space-between; font-weight: 700; margin-bottom: 4px;">
+            <span style="color: var(--neon-cyan);">${match.evidenceId} (Case: ${match.caseId})</span>
+            <span style="color: var(--glow-amber);">${percentage}% Overlap</span>
+          </div>
+          <div style="color: var(--text-secondary); line-height: 1.3;">
+            <span style="color: var(--text-muted); font-weight: 600;">Linked Patterns:</span> ${keywords}
+          </div>
+        </div>
+      `;
+    });
+
+    matchesHtml += `
+        </div>
+      </div>
+    `;
+
+    outputElement.innerHTML += matchesHtml;
+
+  } catch (error) {
+    console.error('[SMART MATCH ERROR]', error);
+  }
+}
+
 // 4. Verification Console (Module 4)
 const checkVerifyReady = () => {
   const fileSelected = verifySelectedFile || verifyFileInput.files.length > 0;
@@ -504,6 +568,9 @@ verifyBtn.addEventListener("click", async () => {
     ].join("");
     
     showOutput(verifyOutput, htmlResult);
+
+    // Cross-reference evidence to discover hidden link overlaps using similarity service
+    fetchSmartMatches(id, verifyOutput);
     
     // Fetch and load timeline logs
     fetchEvidenceHistory(id);

@@ -1,5 +1,6 @@
 const fabricService = require('../services/fabricService');
 const aiService = require('../services/aiService');
+const similarityService = require('../services/similarityService');
 
 /**
  * POST /ai/verify-access
@@ -127,8 +128,35 @@ async function getAnalytics(req, res) {
   }
 }
 
+/**
+ * GET /ai/smart-match/:id
+ * Vectorize and find matching cases via Cosine Similarity.
+ */
+async function getSmartMatches(req, res) {
+  const targetId = req.params.id;
+  
+  if (!targetId) {
+    return res.status(400).json({ error: 'Missing target evidence ID' });
+  }
+
+  try {
+    const allEvidence = await fabricService.getAllEvidence();
+    const matches = similarityService.findSimilarEvidence(targetId, allEvidence);
+    
+    res.json({
+      evidenceId: targetId,
+      matches,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('[SENTINEL AI] Smart match calculation failed:', error.message);
+    res.status(500).json({ error: `Similarity search failed: ${error.message}` });
+  }
+}
+
 module.exports = {
   verifyAccess,
   chat,
-  getAnalytics
+  getAnalytics,
+  getSmartMatches
 };

@@ -102,6 +102,9 @@ app.post('/ai/chat', aiController.chat);
 // GET /ai/analytics - Get pre-computed ledger analytics (no LLM call)
 app.get('/ai/analytics', aiController.getAnalytics);
 
+// GET /ai/smart-match/:id - Cross-reference evidence to find hidden links using Cosine Similarity
+app.get('/ai/smart-match/:id', aiController.getSmartMatches);
+
 // Health Check
 app.get('/health', (req, res) => {
   res.json({

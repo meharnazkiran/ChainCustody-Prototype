@@ -7,7 +7,7 @@ const aiService = require('../services/aiService');
  * Returns { authorized: true/false, officerId }
  */
 async function verifyAccess(req, res) {
-  const { officerId } = req.body;
+  let { officerId } = req.body;
 
   if (!officerId || typeof officerId !== 'string' || officerId.trim().length === 0) {
     return res.status(400).json({ 
@@ -16,21 +16,32 @@ async function verifyAccess(req, res) {
     });
   }
 
+  let cleanId = officerId.trim();
+  // Strip "e.g. " or "eg " prefix if typed literally by user
+  cleanId = cleanId.replace(/^(e\.g\.\s*|eg\s*)/i, '');
+  
+  // Normalize known usernames to correct casing matching the ledger ACL
+  if (cleanId.toLowerCase() === 'dcp_rajesh') {
+    cleanId = 'DCP_Rajesh';
+  } else if (cleanId.toLowerCase() === 'sp_ananya') {
+    cleanId = 'SP_Ananya';
+  }
+
   try {
-    const authorized = await fabricService.checkAIAccess(officerId.trim());
+    const authorized = await fabricService.checkAIAccess(cleanId);
     
     if (authorized) {
-      console.log(`[SENTINEL AI] Access GRANTED for officer: ${officerId}`);
+      console.log(`[SENTINEL AI] Access GRANTED for officer: ${cleanId}`);
       res.json({ 
         authorized: true, 
-        officerId: officerId.trim(),
-        message: `Welcome, ${officerId}. SENTINEL AI is ready.`
+        officerId: cleanId,
+        message: `Welcome, ${cleanId}. SENTINEL AI is ready.`
       });
     } else {
-      console.log(`[SENTINEL AI] Access DENIED for officer: ${officerId}`);
+      console.log(`[SENTINEL AI] Access DENIED for officer: ${cleanId}`);
       res.status(403).json({ 
         authorized: false, 
-        officerId: officerId.trim(),
+        officerId: cleanId,
         message: 'Access denied. Your Officer ID is not authorized for AI analytics. Contact your DCP for clearance.'
       });
     }
@@ -49,15 +60,23 @@ async function verifyAccess(req, res) {
  * Requires officerId in body (re-verified on every request for security).
  */
 async function chat(req, res) {
-  const { officerId, message } = req.body;
+  let { officerId, message } = req.body;
 
   if (!officerId || !message) {
     return res.status(400).json({ error: 'Missing officerId or message' });
   }
 
+  let cleanId = officerId.trim();
+  cleanId = cleanId.replace(/^(e\.g\.\s*|eg\s*)/i, '');
+  if (cleanId.toLowerCase() === 'dcp_rajesh') {
+    cleanId = 'DCP_Rajesh';
+  } else if (cleanId.toLowerCase() === 'sp_ananya') {
+    cleanId = 'SP_Ananya';
+  }
+
   // Re-verify access on every chat request (no stale sessions)
   try {
-    const authorized = await fabricService.checkAIAccess(officerId.trim());
+    const authorized = await fabricService.checkAIAccess(cleanId);
     if (!authorized) {
       return res.status(403).json({ 
         error: 'Access denied. Your session is not authorized.',

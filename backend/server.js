@@ -31,6 +31,14 @@ app.use((req, res, next) => {
 // 2. Authentication & CA Enrollment Endpoints
 app.post('/auth/register', authController.register);
 app.post('/auth/enroll', authController.enroll);
+app.get('/auth/check/:username', async (req, res) => {
+  try {
+    const enrolled = await caService.isEnrolled(req.params.username);
+    res.json({ enrolled });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // 3. Evidence Custody Endpoints
 // POST /evidence/register - Authenticates officer, receives file or metadata, uploads to IPFS, records on chain

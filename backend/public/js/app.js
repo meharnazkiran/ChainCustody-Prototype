@@ -310,26 +310,16 @@ pipelineBtn.addEventListener("click", async () => {
 // Auto-register/enroll officer if missing from wallet
 async function ensureOfficerWallet(username) {
   try {
-    // Attempt registration
-    const regRes = await fetch(`${API_BASE_URL}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, role: "client" })
-    });
-    
-    if (regRes.ok) {
-      const regData = await regRes.json();
-      const secret = regData.enrollmentSecret;
-      
-      // Auto-enroll
-      await fetch(`${API_BASE_URL}/auth/enroll`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, secret })
-      });
+    const checkRes = await fetch(`${API_BASE_URL}/auth/check/${encodeURIComponent(username)}`);
+    if (!checkRes.ok) {
+      throw new Error("Failed to verify officer registration status.");
+    }
+    const status = await checkRes.json();
+    if (!status.enrolled) {
+      throw new Error(`Officer '${username}' is not registered in the system. Please register and enroll this identity first.`);
     }
   } catch (e) {
-    console.warn("CA Setup Check completed:", e.message);
+    throw e;
   }
 }
 

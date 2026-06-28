@@ -11,7 +11,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 // Configuration variables (can be overridden via environment variables)
-const PEER_ENDPOINT = process.env.PEER_ENDPOINT || 'localhost:7051';
+const PEER_ENDPOINT = process.env.PEER_ENDPOINT || '127.0.0.1:7051';
 const PEER_HOST_ALIAS = process.env.PEER_HOST_ALIAS || 'peer0.org1.example.com';
 const CHANNEL_NAME = process.env.CHANNEL_NAME || 'mychannel';
 const CHAINCODE_NAME = process.env.CHAINCODE_NAME || 'evidence';
@@ -213,6 +213,7 @@ app.get('/api/evidence/all', async (req, res) => {
         const evidence = JSON.parse(new TextDecoder().decode(resultBytes) || '[]');
         res.json({ evidence });
     } catch (error) {
+        console.error('GetAllEvidence error:', error);
         res.status(500).json({ error: error.message });
     }
 });

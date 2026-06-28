@@ -55,11 +55,29 @@ app.get('/auth/check/:username', async (req, res) => {
     const enrolled = await caService.isEnrolled(req.params.username);
     res.json({ enrolled });
   } catch (err) {
+    res.status(500).json({ enrolled: false, error: err.message });
+  }
+});
+
+
+
+// DELETE /auth/purge/:username - Remove stale wallet identity so officer can re-register
+app.delete('/auth/purge/:username', async (req, res) => {
+  const username = req.params.username;
+  try {
+    const w = caService.getWallet();
+    if (!w) return res.status(500).json({ error: 'Wallet not initialized' });
+    const exists = await w.get(username);
+    if (!exists) return res.json({ message: `No wallet entry found for '${username}'.` });
+    await w.remove(username);
+    console.log(`[AUTH] Purged wallet identity for '${username}'.`);
+    res.json({ message: `Wallet identity for '${username}' removed. You can now re-register and enroll.` });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 3. Evidence Custody Endpoints
+
 // POST /evidence/register - Authenticates officer, receives file or metadata, uploads to IPFS, records on chain
 app.post(
   '/evidence/register', 
@@ -87,6 +105,9 @@ app.get('/evidence/history/:id', evidenceController.getHistory);
 
 // GET /evidence/export/:id - Generates and streams Section 63 BSA PDF certificate
 app.get('/evidence/export/:id', evidenceController.exportCertificate);
+
+// GET /api/graph-data - Compile node-link network graph data from ledger
+app.get('/api/graph-data', evidenceController.getGraphData);
 
 // ============================================================
 // SENTINEL AI — Analytics Layer Routes
@@ -126,9 +147,14 @@ app.use((err, req, res, next) => {
 async function startServer() {
   console.log('Starting Chain of Custody Backend...');
   
-  // Initialize services
-  await caService.initCA();
-  await fabricService.initFabric();
+  // Initialize services with graceful connection logging
+  try {
+    await caService.initCA();
+    await fabricService.initFabric();
+  } catch (err) {
+    console.error(`[CRITICAL] Fabric Services initialization failed: ${err.message}`);
+    console.log('Continuing server startup in strict offline state...');
+  }
 
   server.listen(config.PORT, () => {
     console.log(`Backend API Server running at http://localhost:${config.PORT}`);

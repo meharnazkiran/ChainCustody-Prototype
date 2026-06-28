@@ -520,10 +520,154 @@ async function exportCertificate(req, res) {
   }
 }
 
+/**
+ * Compile case, evidence, and officer contribution relations for the visual network graph.
+ */
+async function getGraphData(req, res) {
+  try {
+    const allEvidence = await fabricService.getAllEvidence();
+    const allHistories = await fabricService.getAllHistories();
+
+    const nodesMap = new Map();
+    const edges = [];
+
+    allEvidence.forEach(ev => {
+      // 1. Add Case node
+      if (ev.caseId) {
+        const caseNodeId = `case:${ev.caseId}`;
+        if (!nodesMap.has(caseNodeId)) {
+          nodesMap.set(caseNodeId, {
+            id: caseNodeId,
+            label: ev.caseId,
+            group: 'case',
+            title: `Case File: ${ev.caseId}`
+          });
+        }
+      }
+
+      // 2. Add Evidence node
+      const evNodeId = `evidence:${ev.evidenceId}`;
+      if (!nodesMap.has(evNodeId)) {
+        nodesMap.set(evNodeId, {
+          id: evNodeId,
+          label: ev.evidenceId,
+          group: 'evidence',
+          title: `Evidence ID: ${ev.evidenceId}`
+        });
+      }
+
+      // Link Evidence to Case
+      if (ev.caseId) {
+        edges.push({
+          from: evNodeId,
+          to: `case:${ev.caseId}`,
+          label: 'belongs_to',
+          arrows: 'to',
+          color: { color: 'rgba(0, 240, 255, 0.4)' }
+        });
+      }
+
+      // 3. Add Officer node (creator/seizing officer)
+      if (ev.officerId) {
+        const officerNodeId = `officer:${ev.officerId}`;
+        if (!nodesMap.has(officerNodeId)) {
+          nodesMap.set(officerNodeId, {
+            id: officerNodeId,
+            label: ev.officerId,
+            group: 'officer',
+            title: `Officer: ${ev.officerId}`
+          });
+        }
+
+        // Link Officer to Evidence (registered)
+        edges.push({
+          from: officerNodeId,
+          to: evNodeId,
+          label: 'registered',
+          arrows: 'to',
+          color: { color: 'rgba(0, 255, 140, 0.4)' }
+        });
+      }
+    });
+
+    // 4. Add Custody Transfer History links
+    Object.entries(allHistories).forEach(([evidenceId, history]) => {
+      const evNodeId = `evidence:${evidenceId}`;
+      history.forEach((tx, idx) => {
+        const val = tx.value;
+        if (!val) return;
+
+        // If it is a transfer transaction (contains fromOrg and toOrg)
+        if (val.fromOrg && val.toOrg) {
+          const fromOrgNodeId = `org:${val.fromOrg}`;
+          const toOrgNodeId = `org:${val.toOrg}`;
+
+          if (!nodesMap.has(fromOrgNodeId)) {
+            nodesMap.set(fromOrgNodeId, {
+              id: fromOrgNodeId,
+              label: val.fromOrg === 'PoliceDept' ? 'Police' : val.fromOrg === 'ForensicLab' ? 'Lab' : 'Court',
+              group: 'org',
+              title: `Organization: ${val.fromOrg}`
+            });
+          }
+          if (!nodesMap.has(toOrgNodeId)) {
+            nodesMap.set(toOrgNodeId, {
+              id: toOrgNodeId,
+              label: val.toOrg === 'PoliceDept' ? 'Police' : val.toOrg === 'ForensicLab' ? 'Lab' : 'Court',
+              group: 'org',
+              title: `Organization: ${val.toOrg}`
+            });
+          }
+
+          // Link Evidence to Custodian Org (held_by)
+          edges.push({
+            from: evNodeId,
+            to: toOrgNodeId,
+            label: `held_by (Tx #${idx})`,
+            arrows: 'to',
+            dashes: true,
+            color: { color: 'rgba(255, 184, 0, 0.4)' }
+          });
+        }
+
+        // Link the acting officer/signee of each transaction to the evidence
+        if (val.officerId) {
+          const officerNodeId = `officer:${val.officerId}`;
+          if (!nodesMap.has(officerNodeId)) {
+            nodesMap.set(officerNodeId, {
+              id: officerNodeId,
+              label: val.officerId,
+              group: 'officer',
+              title: `Officer: ${val.officerId}`
+            });
+          }
+
+          // Link officer to transaction signature/contribution
+          edges.push({
+            from: officerNodeId,
+            to: evNodeId,
+            label: `signed (Tx #${idx})`,
+            arrows: 'to',
+            color: { color: 'rgba(138, 92, 246, 0.4)' }
+          });
+        }
+      });
+    });
+
+    res.json({
+      nodes: Array.from(nodesMap.values()),
+      edges
+    });
+  } catch (err) {
+    res.status(500).json({ error: `Failed to compile graph data: ${err.message}` });
+  }
+}
+
 module.exports = {
   registerEvidence,
   transferCustody,
   verifyEvidence,
   getHistory,
-  exportCertificate
+  exportCertificate,
+  getGraphData
 };

@@ -17,6 +17,8 @@
   <link rel="stylesheet" href="./css/antigravity.css" />
   <link rel="stylesheet" href="./css/wormhole.css" />
   <link rel="stylesheet" href="./css/sentinel.css" />
+  <!-- vis.js CDN for visual network graph -->
+  <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 </head>
 <body>
 
@@ -59,8 +61,13 @@
       
       <div class="form-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; font-family: var(--font-mono); font-size: 0.8rem;">
         <div class="dashboard-stat-box" style="padding: 15px; background: rgba(1, 4, 6, 0.6); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
-          <span style="color: var(--text-muted); font-size: 0.7rem; display: block; text-transform: uppercase;">CONNECTED ORG</span>
-          <span id="dash-connected-org" style="color: var(--text-pure); font-weight: 700; font-size: 0.95rem;">Tamil Nadu Police (Org1)</span>
+          <span style="color: var(--text-muted); font-size: 0.7rem; display: block; text-transform: uppercase; margin-bottom: 5px;">CONNECTED ORG</span>
+          <select id="active-role-selector" style="width: 100%; padding: 4px 8px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: rgba(1, 7, 10, 0.9); color: var(--text-pure); font-family: var(--font-mono); font-size: 0.82rem; font-weight: 700; outline: none; cursor: pointer; border-color: var(--glow-cyan); box-shadow: 0 0 10px rgba(0,240,255,0.2);">
+            <option value="police" selected>Tamil Nadu Police (Org1)</option>
+            <option value="lab">Forensic Lab (Org2)</option>
+            <option value="court">Judicial Court (Org3)</option>
+          </select>
+          <span id="dash-connected-org" style="display: none;">Tamil Nadu Police (Org1)</span>
         </div>
         <div class="dashboard-stat-box" style="padding: 15px; background: rgba(1, 4, 6, 0.6); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
           <span style="color: var(--text-muted); font-size: 0.7rem; display: block; text-transform: uppercase;">FABRIC CA SERVICE</span>
@@ -347,6 +354,60 @@
       </div>
 
     </div>
+
+    <!-- MODULE 7: INTERACTIVE CUSTODY NETWORK GRAPH -->
+    <div class="hud-card" id="section-network-graph" style="margin-top: 30px; border-top-color: var(--glow-cyan) !important;">
+      <div class="hud-card__header" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <div style="display: flex; align-items: center;">
+          <div class="hud-card__icon" style="color: var(--glow-cyan); border-color: rgba(0, 240, 255, 0.2); background: rgba(0, 240, 255, 0.05);">📊</div>
+          <div>
+            <div class="hud-card__title">Case Custody & Officer Contributions Network Graph</div>
+            <div class="hud-card__subtitle">Ledger-wide connection auditing of evidence pathways</div>
+          </div>
+        </div>
+      </div>
+      
+      <div class="hud-card__body" style="padding: 20px;">
+        <div style="margin-bottom: 20px; display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+          <label for="graph-case-selector" style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-secondary);">Select Case ID to render visual graph:</label>
+          <select id="graph-case-selector" style="background: #010710; color: #fff; border: 1px solid var(--border-subtle); padding: 8px 12px; border-radius: 4px; font-family: var(--font-mono); font-size: 0.8rem; min-width: 240px; cursor: pointer; outline: none; border-color: var(--glow-cyan);">
+            <option value="">-- Choose a Case ID --</option>
+          </select>
+          <button id="refresh-graph-btn" class="btn btn--outline" style="padding: 6px 12px; font-size: 0.72rem; width: auto; font-family: var(--font-mono); margin-top: 0;">🔄 Reload Cases</button>
+        </div>
+
+        <div style="display: flex; gap: 20px; position: relative;">
+          <!-- Graph Container -->
+          <div id="dashboard-network-container" style="flex: 1; height: 420px; background: rgba(1, 4, 6, 0.5); border: 1px solid var(--border-subtle); border-radius: 4px; position: relative; overflow: hidden; display: none;">
+            <!-- Legend inside Graph -->
+            <div style="position: absolute; bottom: 15px; left: 15px; background: rgba(1, 4, 6, 0.9); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 10px; z-index: 99; font-family: var(--font-mono); font-size: 0.65rem; display: flex; flex-direction: column; gap: 4px;">
+              <div style="display:flex; align-items:center; gap:6px;"><div style="width:10px; height:10px; border-radius:50%; background:#8b5cf6; box-shadow:0 0 5px #8b5cf6;"></div><span>Case (Purple)</span></div>
+              <div style="display:flex; align-items:center; gap:6px;"><div style="width:10px; height:10px; border-radius:50%; background:#ffb800; box-shadow:0 0 5px #ffb800;"></div><span>Evidence (Yellow)</span></div>
+              <div style="display:flex; align-items:center; gap:6px;"><div style="width:10px; height:10px; border-radius:50%; background:#00ff8c; box-shadow:0 0 5px #00ff8c;"></div><span>Officer (Green)</span></div>
+              <div style="display:flex; align-items:center; gap:6px;"><div style="width:10px; height:10px; border-radius:50%; background:#06b6d4; box-shadow:0 0 5px #06b6d4;"></div><span>Dept Node (Cyan)</span></div>
+            </div>
+            
+            <!-- Loader inside Graph -->
+            <div id="dashboard-graph-loader" style="position: absolute; top:0; left:0; right:0; bottom:0; background: rgba(1, 4, 6, 0.8); display: none; justify-content: center; align-items: center; flex-direction: column; gap: 10px; z-index: 100; color: var(--neon-cyan); font-family: var(--font-mono); font-size: 0.8rem;">
+              <div style="border: 3px solid rgba(0, 240, 255, 0.1); width: 32px; height: 32px; border-radius: 50%; border-left-color: var(--neon-cyan); animation: spin 1s linear infinite;"></div>
+              <div>Compiling ledger relations...</div>
+            </div>
+          </div>
+
+          <!-- Sidebar details inside Graph HUD card -->
+          <div id="dashboard-graph-details" style="width: 320px; background: rgba(1, 7, 12, 0.6); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 15px; display: none; flex-direction: column; overflow-y: auto; max-height: 420px;">
+            <h4 style="font-family: 'Space Grotesk', sans-serif; font-size: 0.9rem; font-weight: 700; color: var(--neon-cyan); margin-top: 0; margin-bottom: 12px; text-transform: uppercase; border-bottom: 1px solid rgba(0,240,255,0.1); padding-bottom: 6px; text-shadow:0 0 5px rgba(0,240,255,0.2);" id="dashboard-graph-side-title">No Node Selected</h4>
+            <div id="dashboard-graph-side-content" style="font-family: var(--font-mono); font-size: 0.72rem; line-height: 1.5; color: var(--text-secondary);">
+              Click a node in the graph to audit its ledger history details.
+            </div>
+          </div>
+
+          <!-- Select Case Placeholder -->
+          <div id="dashboard-graph-placeholder" style="flex: 1; height: 420px; display: flex; justify-content: center; align-items: center; background: rgba(1, 4, 6, 0.2); border: 1px dashed var(--border-subtle); border-radius: 4px; font-family: var(--font-mono); color: var(--text-muted); font-size: 0.8rem; text-align: center; padding: 20px;">
+            Please select a Case ID from the dropdown above to load the live officer contribution and custody graph.
+          </div>
+        </div>
+      </div>
 
     <!-- HUD Footer -->
     <footer class="hud-footer">

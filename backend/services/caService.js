@@ -7,17 +7,13 @@ const config = require('../config');
 
 let wallet;
 let caClient;
-let useMock = false;
-
-// Basic Mock Wallet database in case file system wallet fails or mock mode is active
-const mockUserStore = new Map();
 
 /**
  * Initialize CA client and wallet.
  */
 async function initCA() {
   try {
-    // 1. Initialize Wallet
+    // Initialize FileSystem Wallet
     wallet = await Wallets.newFileSystemWallet(config.WALLET_PATH);
     console.log(`Fabric Wallet initialized at: ${config.WALLET_PATH}`);
     
@@ -32,44 +28,26 @@ async function initCA() {
       pem = await fs.readFile('/mnt/c/Users/mages/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/ca/ca.org1.example.com-cert.pem', 'utf8');
     }
 
-    // 2. Initialize Fabric CA Client using TLS
+    // Initialize Fabric CA Client using TLS
     const secureCAUrl = config.CA_URL.replace('http:', 'https:');
     console.log(`Connecting to Fabric CA at: ${secureCAUrl}`);
     caClient = new FabricCAServices(secureCAUrl, { trustedRoots: [pem], verify: false }, config.CA_NAME);
     
-    // Test CA connection probe (check if CA socket is open)
-    try {
-      const net = require('net');
-      await new Promise((resolve, reject) => {
-        const socket = net.createConnection(7054, 'localhost', () => {
-          socket.end();
-          resolve();
-        });
-        socket.on('error', reject);
-        setTimeout(() => { socket.destroy(); reject(new Error('Timeout')); }, 1500);
+    // Check if CA socket is open
+    const net = require('net');
+    await new Promise((resolve, reject) => {
+      const socket = net.createConnection(7054, '127.0.0.1', () => {
+        socket.end();
+        resolve();
       });
-      console.log('Fabric CA server port is reachable.');
-    } catch (e) {
-      console.warn(`[WARNING] Fabric CA server is offline. Enabling Mock CA mode.`);
-      useMock = true;
-    }
+      socket.on('error', reject);
+      setTimeout(() => { socket.destroy(); reject(new Error('Timeout')); }, 1500);
+    });
+    console.log('Fabric CA server port is reachable.');
   } catch (error) {
-    console.warn(`[WARNING] Failed to initialize Fabric CA SDK: ${error.message}. Enabling Mock CA mode.`);
-    useMock = true;
+    console.error(`[ERROR] Failed to initialize Fabric CA SDK: ${error.message}. strict-ca-mode active.`);
+    throw new Error(`Fabric CA server is offline or unreachable: ${error.message}`);
   }
-}
-
-
-/**
- * Helper to generate a realistic mock certificate
- */
-function generateMockCert(username, org = 'Org1MSP') {
-  const pubKey = crypto.randomBytes(128).toString('base64');
-  return `-----BEGIN CERTIFICATE-----\n` +
-         `MIIB1TCCAT6gAwIBAgIU${crypto.randomBytes(8).toString('hex')}...\n` +
-         `CN=${username},O=Evidex,OU=${org}\n` +
-         `PublicKey=${pubKey.substring(0, 64)}\n` +
-         `-----END CERTIFICATE-----`;
 }
 
 /**
@@ -78,54 +56,29 @@ function generateMockCert(username, org = 'Org1MSP') {
 async function enrollAdmin() {
   if (!wallet) await initCA();
 
-  if (useMock) {
-    console.log('CA (Mock Mode): Checking admin registration...');
-    const adminExists = await wallet.get('admin');
-    if (!adminExists) {
-      const mockAdminIdentity = {
-        credentials: {
-          certificate: generateMockCert('admin'),
-          privateKey: crypto.randomBytes(32).toString('hex')
-        },
-        mspId: 'Org1MSP',
-        type: 'X.509'
-      };
-      await wallet.put('admin', mockAdminIdentity);
-      console.log('CA (Mock Mode): Successfully enrolled admin registrar.');
-    }
+  const adminExists = await wallet.get('admin');
+  if (adminExists) {
+    console.log('Admin identity already exists in wallet.');
     return;
   }
 
-  try {
-    const adminExists = await wallet.get('admin');
-    if (adminExists) {
-      console.log('Admin identity already exists in wallet.');
-      return;
-    }
+  console.log('Enrolling admin registrar with CA...');
+  const enrollment = await caClient.enroll({
+    enrollmentID: 'admin',
+    enrollmentSecret: 'adminpw'
+  });
 
-    console.log('Enrolling admin registrar with CA...');
-    const enrollment = await caClient.enroll({
-      enrollmentID: 'admin',
-      enrollmentSecret: 'adminpw'
-    });
+  const x509Identity = {
+    credentials: {
+      certificate: enrollment.certificate,
+      privateKey: enrollment.key.toBytes(),
+    },
+    mspId: 'Org1MSP',
+    type: 'X.509',
+  };
 
-    const x509Identity = {
-      credentials: {
-        certificate: enrollment.certificate,
-        privateKey: enrollment.key.toBytes(),
-      },
-      mspId: 'Org1MSP',
-      type: 'X.509',
-    };
-
-    await wallet.put('admin', x509Identity);
-    console.log('Successfully enrolled admin registrar and saved to wallet.');
-  } catch (error) {
-    console.error('Failed to enroll admin registrar: ', error);
-    console.warn('CA: Falling back to Mock mode for admin enrollment.');
-    useMock = true;
-    await enrollAdmin(); // retry in mock mode
-  }
+  await wallet.put('admin', x509Identity);
+  console.log('Successfully enrolled admin registrar and saved to wallet.');
 }
 
 /**
@@ -134,46 +87,32 @@ async function enrollAdmin() {
  * @param {string} userRole (e.g. officer, lab)
  * @returns {Promise<string>} Enrollment secret
  */
-
 async function registerUser(username, userRole = 'client') {
   if (!wallet) await initCA();
   await enrollAdmin();
 
   const assignedRole = (userRole === 'lab' || username.toLowerCase().includes('lab')) ? 'lab' : 'officer';
 
-  if (useMock) {
-    console.log(`CA (Mock Mode): Registering user ${username} with role ${assignedRole}...`);
-    const secret = crypto.randomBytes(6).toString('hex');
-    mockUserStore.set(username, { secret, userRole: assignedRole, registered: true });
-    console.log(`CA (Mock Mode): Registered ${username} with secret: ${secret}`);
-    return secret;
+  const userExists = await wallet.get(username);
+  if (userExists) {
+    throw new Error(`Identity '${username}' already exists in wallet.`);
   }
 
-  try {
-    const userExists = await wallet.get(username);
-    if (userExists) {
-      throw new Error(`Identity '${username}' already exists in wallet.`);
-    }
+  const adminIdentity = await wallet.get('admin');
+  const provider = wallet.getProviderRegistry().getProvider(adminIdentity.type);
+  const adminUser = await provider.getUserContext(adminIdentity, 'admin');
 
-    const adminIdentity = await wallet.get('admin');
-    const provider = wallet.getProviderRegistry().getProvider(adminIdentity.type);
-    const adminUser = await provider.getUserContext(adminIdentity, 'admin');
+  const secret = await caClient.register({
+    affiliation: 'org1.department1',
+    enrollmentID: username,
+    role: 'client',
+    attrs: [
+      { name: 'evidex.role', value: assignedRole, ecert: true }
+    ]
+  }, adminUser);
 
-    const secret = await caClient.register({
-      affiliation: 'org1.department1',
-      enrollmentID: username,
-      role: 'client',
-      attrs: [
-        { name: 'evidex.role', value: assignedRole, ecert: true }
-      ]
-    }, adminUser);
-
-    console.log(`Successfully registered user ${username} with CA (Role: ${assignedRole}). Secret generated.`);
-    return secret;
-  } catch (error) {
-    console.error(`Failed to register user ${username}: `, error);
-    throw error;
-  }
+  console.log(`Successfully registered user ${username} with CA (Role: ${assignedRole}). Secret generated.`);
+  return secret;
 }
 
 /**
@@ -184,51 +123,23 @@ async function registerUser(username, userRole = 'client') {
 async function enrollUser(username, secret) {
   if (!wallet) await initCA();
 
-  if (useMock) {
-    console.log(`CA (Mock Mode): Enrolling user ${username}...`);
-    const user = mockUserStore.get(username);
-    if (!user || user.secret !== secret) {
-      throw new Error('Invalid username or enrollment secret');
-    }
+  const enrollment = await caClient.enroll({
+    enrollmentID: username,
+    enrollmentSecret: secret
+  });
 
-    const mockUserIdentity = {
-      credentials: {
-        certificate: generateMockCert(username),
-        privateKey: crypto.randomBytes(32).toString('hex')
-      },
-      mspId: 'Org1MSP',
-      type: 'X.509'
-    };
+  const x509Identity = {
+    credentials: {
+      certificate: enrollment.certificate,
+      privateKey: enrollment.key.toBytes(),
+    },
+    mspId: 'Org1MSP',
+    type: 'X.509',
+  };
 
-    await wallet.put(username, mockUserIdentity);
-    user.enrolled = true;
-    mockUserStore.set(username, user);
-    console.log(`CA (Mock Mode): Successfully enrolled ${username} and saved to wallet.`);
-    return mockUserIdentity;
-  }
-
-  try {
-    const enrollment = await caClient.enroll({
-      enrollmentID: username,
-      enrollmentSecret: secret
-    });
-
-    const x509Identity = {
-      credentials: {
-        certificate: enrollment.certificate,
-        privateKey: enrollment.key.toBytes(),
-      },
-      mspId: 'Org1MSP',
-      type: 'X.509',
-    };
-
-    await wallet.put(username, x509Identity);
-    console.log(`Successfully enrolled user ${username} and saved to wallet.`);
-    return x509Identity;
-  } catch (error) {
-    console.error(`Failed to enroll user ${username}: `, error);
-    throw error;
-  }
+  await wallet.put(username, x509Identity);
+  console.log(`Successfully enrolled user ${username} and saved to wallet.`);
+  return x509Identity;
 }
 
 /**
@@ -249,5 +160,5 @@ module.exports = {
   enrollUser,
   isEnrolled,
   getWallet: () => wallet,
-  isMock: () => useMock
+  isMock: () => false
 };

@@ -24,6 +24,7 @@ const nodes = {
 const dashConnectedOrg = document.getElementById("dash-connected-org");
 const dashCaStatus = document.getElementById("dash-ca-status");
 const dashLedgerMode = document.getElementById("dash-ledger-mode");
+const activeRoleSelector = document.getElementById("active-role-selector");
 
 // Module 2: Registration
 const pipelineFileInput = document.getElementById("pipeline-file-input");
@@ -160,6 +161,7 @@ window.addEventListener("DOMContentLoaded", () => {
   setTimeout(() => {
     setActiveNode("police");
     fetchSystemHealth();
+    populateCaseSelector();
   }, 150);
 
   // Link Timeline nodes to information lookup/focus
@@ -167,7 +169,7 @@ window.addEventListener("DOMContentLoaded", () => {
     nodes.police.addEventListener("click", () => {
       setActiveNode("police");
       if (activeCustodian === "PoliceDept" && activeEvidenceId) {
-        openHandoffPanel("PoliceDept");
+        openHandoffPanel("PoliceDept", false, true);
       }
     });
   }
@@ -175,7 +177,7 @@ window.addEventListener("DOMContentLoaded", () => {
     nodes.lab.addEventListener("click", () => {
       setActiveNode("lab");
       if (activeCustodian === "ForensicLab" && activeEvidenceId) {
-        openHandoffPanel("ForensicLab");
+        openHandoffPanel("ForensicLab", false, true);
       }
     });
   }
@@ -183,8 +185,39 @@ window.addEventListener("DOMContentLoaded", () => {
     nodes.court.addEventListener("click", () => {
       setActiveNode("court");
       if (activeCustodian === "JudicialCourt" && activeEvidenceId) {
-        openHandoffPanel("JudicialCourt");
+        openHandoffPanel("JudicialCourt", false, true);
       }
+    });
+  }
+
+  // Active Role Selector Listener
+  if (activeRoleSelector) {
+    activeRoleSelector.addEventListener("change", async (e) => {
+      const selectedRole = e.target.value; // "police", "lab", "court"
+      
+      const orgName = selectedRole === "police" ? "Tamil Nadu Police (Org1)" :
+                      selectedRole === "lab" ? "Forensic Lab (Org2)" : "Judicial Court (Org3)";
+      if (dashConnectedOrg) {
+        dashConnectedOrg.textContent = orgName;
+      }
+      
+      setActiveNode(selectedRole);
+      
+      const custodianKey = selectedRole === "police" ? "PoliceDept" :
+                           selectedRole === "lab" ? "ForensicLab" : "JudicialCourt";
+      activeCustodian = custodianKey;
+      
+      const defaultOfficer = selectedRole === "police" ? "Officer_Smith" :
+                            selectedRole === "lab" ? "Lab_Technician" : "Judge_Raman";
+      if (pipelineOfficerId) {
+        pipelineOfficerId.value = defaultOfficer;
+      }
+      
+      if (activeEvidenceId) {
+        openHandoffPanel(custodianKey);
+      }
+      
+      console.log(`[ROLE SELECTOR] Switched active role to: ${selectedRole} (${orgName}). Default Officer ID: ${defaultOfficer}`);
     });
   }
 });
@@ -304,9 +337,10 @@ pipelineBtn.addEventListener("click", async () => {
     // Cross-reference evidence to discover hidden link overlaps using similarity service
     fetchSmartMatches(activeEvidenceId, pipelineOutput);
 
-    // Enable and show Handoff options
-    openHandoffPanel("PoliceDept", true);
+    // Enable and show Handoff options — no scroll (user is reading the output above)
+    openHandoffPanel("PoliceDept", true, false);
     fetchEvidenceHistory(activeEvidenceId);
+    populateCaseSelector();
 
   } catch (err) {
     showOutput(pipelineOutput, `❌ Registration Pipeline Failed: ${err.message}`);
@@ -314,21 +348,24 @@ pipelineBtn.addEventListener("click", async () => {
   setLoading(pipelineBtn, false);
 });
 
-// Auto-register/enroll officer if missing from wallet
+// Gate: verify officer is pre-registered via terminal before allowing evidence submission.
+// Registration is done exclusively via Fabric CA terminal commands — not through the UI.
 async function ensureOfficerWallet(username) {
-  try {
-    const checkRes = await fetch(`${API_BASE_URL}/auth/check/${encodeURIComponent(username)}`);
-    if (!checkRes.ok) {
-      throw new Error("Failed to verify officer registration status.");
-    }
-    const status = await checkRes.json();
-    if (!status.enrolled) {
-      throw new Error(`Officer '${username}' is not registered in the system. Please register and enroll this identity first.`);
-    }
-  } catch (e) {
-    throw e;
+  const checkRes = await fetch(`${API_BASE_URL}/auth/check/${encodeURIComponent(username)}`);
+  const status = await checkRes.json();
+
+  if (!checkRes.ok) {
+    throw new Error(status.error || 'Unable to verify officer identity. Backend unreachable.');
+  }
+
+  if (!status.enrolled) {
+    throw new Error(
+      `ACCESS DENIED — Officer '${username}' is not registered in the Fabric CA.\n` +
+      `Officers must be registered via terminal before submitting evidence.`
+    );
   }
 }
+
 
 // Open handoff console for active custody node
 function openHandoffPanel(custodianKey, clearOutput = false) {
@@ -353,7 +390,11 @@ function openHandoffPanel(custodianKey, clearOutput = false) {
   if (clearOutput) {
     handoffOutput.classList.remove("visible");
   }
-  sectionHandoffAction.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  // Only scroll into view when triggered by an explicit user action (node click / button),
+  // NOT after evidence submission — that would yank the user away from the results.
+  if (arguments[2] === true) {
+    sectionHandoffAction.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
 }
 
 // Module 3 Handoff Submit
@@ -367,6 +408,9 @@ handoffSubmitBtn.addEventListener("click", async () => {
   const fromOrgValue = activeCustodian;
 
   try {
+    // Auto-register/enroll the transferring officer dynamically in Fabric CA if needed
+    await ensureOfficerWallet(officerId);
+
     const res = await fetch(`${API_BASE_URL}/evidence/transfer`, {
       method: "POST",
       headers: { 
@@ -408,6 +452,7 @@ handoffSubmitBtn.addEventListener("click", async () => {
       setActiveNode(targetNodeKey);
       openHandoffPanel(toOrg);
       fetchEvidenceHistory(activeEvidenceId);
+      populateCaseSelector();
     }, 1500);
 
   } catch (err) {
@@ -465,7 +510,7 @@ async function fetchSmartMatches(evidenceId, outputElement) {
         <div style="margin-top: 15px; border-top: 1px dashed rgba(255,255,255,0.1); padding-top: 10px;">
           <div style="color: var(--text-secondary); font-size: 0.72rem; display: flex; align-items: center; gap: 6px;">
             <span>🔍</span>
-            <span style="font-family: var(--font-mono); font-weight: 500;">SENTINEL LINK ANALYSIS:</span>
+            <span style="font-family: var(--font-mono); font-weight: 500;">Similarity recommendation engine:</span>
             <span style="color: var(--text-muted);">No matching case patterns or metadata overlaps found.</span>
           </div>
         </div>
@@ -860,3 +905,312 @@ window.fireWormhole = function(fromOrg, toOrg) {
     window.evidexWormhole.executeWormholeTravel();
   }
 };
+
+// ============================================================
+// MODULE 7: INTERACTIVE CUSTODY NETWORK GRAPH CONTROLLER
+// ============================================================
+
+const graphCaseSelector = document.getElementById("graph-case-selector");
+const refreshGraphBtn = document.getElementById("refresh-graph-btn");
+const dashboardNetworkContainer = document.getElementById("dashboard-network-container");
+const dashboardGraphPlaceholder = document.getElementById("dashboard-graph-placeholder");
+const dashboardGraphLoader = document.getElementById("dashboard-graph-loader");
+const dashboardGraphSideTitle = document.getElementById("dashboard-graph-side-title");
+const dashboardGraphSideContent = document.getElementById("dashboard-graph-side-content");
+
+let fullGraphData = null;
+
+async function populateCaseSelector() {
+  if (!graphCaseSelector) return;
+  
+  // Store currently selected value
+  const currentSelected = graphCaseSelector.value;
+  
+  try {
+    if (dashboardGraphLoader) dashboardGraphLoader.style.display = "flex";
+    
+    const res = await fetch(`${API_BASE_URL}/api/graph-data`);
+    if (!res.ok) throw new Error("Failed to fetch graph data");
+    const data = await res.json();
+    
+    fullGraphData = data;
+    
+    // Extract case nodes
+    const cases = data.nodes.filter(n => n.group === 'case');
+    
+    // Populate dropdown
+    graphCaseSelector.innerHTML = '<option value="">-- Choose a Case ID --</option>';
+    cases.forEach(c => {
+      const opt = document.createElement("option");
+      opt.value = c.id;
+      opt.textContent = c.label;
+      graphCaseSelector.appendChild(opt);
+    });
+    
+    // Restore selection if valid
+    if (currentSelected && cases.some(c => c.id === currentSelected)) {
+      graphCaseSelector.value = currentSelected;
+      renderFilteredGraph(currentSelected);
+    } else {
+      // Clear graph display if nothing or invalid was selected
+      if (dashboardNetworkContainer) dashboardNetworkContainer.style.display = "none";
+      const detailsBox = document.getElementById("dashboard-graph-details");
+      if (detailsBox) detailsBox.style.display = "none";
+      if (dashboardGraphPlaceholder) dashboardGraphPlaceholder.style.display = "flex";
+    }
+  } catch (err) {
+    console.error("Failed to populate case selector:", err);
+    if (dashboardGraphPlaceholder) {
+      dashboardGraphPlaceholder.innerHTML = `<div style="color:var(--glow-crimson)">❌ ERROR LOADING GRAPH DATABASE: ${err.message}</div>`;
+    }
+  } finally {
+    if (dashboardGraphLoader) dashboardGraphLoader.style.display = "none";
+  }
+}
+window.populateCaseSelector = populateCaseSelector;
+
+function renderFilteredGraph(caseNodeId) {
+  if (!fullGraphData || !dashboardNetworkContainer) return;
+  
+  if (!caseNodeId) {
+    dashboardNetworkContainer.style.display = "none";
+    const detailsBox = document.getElementById("dashboard-graph-details");
+    if (detailsBox) detailsBox.style.display = "none";
+    dashboardGraphPlaceholder.style.display = "flex";
+    return;
+  }
+  
+  const selectedCaseNode = fullGraphData.nodes.find(n => n.id === caseNodeId);
+  if (!selectedCaseNode) return;
+  
+  // 1. Gather all direct edges connected to the Case node
+  const directEdges = fullGraphData.edges.filter(e => e.to === caseNodeId || e.from === caseNodeId);
+  
+  // 2. Identify linked evidence nodes
+  const linkedEvidenceNodeIds = new Set();
+  directEdges.forEach(e => {
+    if (e.from.startsWith("evidence:")) linkedEvidenceNodeIds.add(e.from);
+    if (e.to.startsWith("evidence:")) linkedEvidenceNodeIds.add(e.to);
+  });
+  
+  // 3. Find secondary links (officers submitting/signing, orgs holding)
+  const finalNodeIds = new Set([caseNodeId, ...linkedEvidenceNodeIds]);
+  const finalEdges = [...directEdges];
+  
+  fullGraphData.edges.forEach(e => {
+    const isFromEvidence = linkedEvidenceNodeIds.has(e.from);
+    const isToEvidence = linkedEvidenceNodeIds.has(e.to);
+    
+    if (isFromEvidence || isToEvidence) {
+      finalNodeIds.add(e.from);
+      finalNodeIds.add(e.to);
+      if (!finalEdges.some(ex => ex.from === e.from && ex.to === e.to && ex.label === e.label)) {
+        finalEdges.push(e);
+      }
+    }
+  });
+  
+  // 4. Filter nodes
+  const filteredNodes = fullGraphData.nodes.filter(n => finalNodeIds.has(n.id));
+  
+  // Reveal layout
+  dashboardNetworkContainer.style.display = "block";
+  const detailsBox = document.getElementById("dashboard-graph-details");
+  if (detailsBox) detailsBox.style.display = "flex";
+  dashboardGraphPlaceholder.style.display = "none";
+  
+  const options = {
+    nodes: {
+      shape: 'dot',
+      size: 26,
+      font: {
+        face: 'Share Tech Mono, monospace',
+        color: '#e2e8f0',
+        size: 12,
+        strokeWidth: 3,
+        strokeColor: '#010d14',
+        bold: { color: '#ffffff', size: 13 }
+      },
+      borderWidth: 2.5,
+      borderWidthSelected: 4,
+      shadow: { enabled: true, color: 'rgba(0, 240, 255, 0.2)', size: 18, x: 0, y: 0 }
+    },
+    edges: {
+      font: {
+        face: 'Share Tech Mono, monospace',
+        color: 'rgba(148, 163, 184, 0.7)',
+        size: 9,
+        strokeWidth: 2,
+        strokeColor: '#010d14',
+        align: 'middle'
+      },
+      arrows: { to: { enabled: true, scaleFactor: 0.5, type: 'arrow' } },
+      color: { color: 'rgba(0, 240, 255, 0.18)', highlight: '#00f0ff', hover: 'rgba(0, 240, 255, 0.5)' },
+      width: 1.5,
+      selectionWidth: 2.5,
+      smooth: { type: 'curvedCW', roundness: 0.15 },
+      hoverWidth: 2
+    },
+    groups: {
+      officer: {
+        shape: 'dot',
+        size: 28,
+        color: {
+          background: 'rgba(0, 255, 140, 0.08)',
+          border: '#00ff8c',
+          highlight: { background: 'rgba(0, 255, 140, 0.22)', border: '#00ff8c' },
+          hover: { background: 'rgba(0, 255, 140, 0.15)', border: '#00ff8c' }
+        },
+        shadow: { enabled: true, color: 'rgba(0, 255, 140, 0.35)', size: 20, x: 0, y: 0 },
+        font: { color: '#00ff8c', strokeColor: '#010d14' }
+      },
+      evidence: {
+        shape: 'dot',
+        size: 24,
+        color: {
+          background: 'rgba(255, 184, 0, 0.08)',
+          border: '#ffb800',
+          highlight: { background: 'rgba(255, 184, 0, 0.22)', border: '#ffb800' },
+          hover: { background: 'rgba(255, 184, 0, 0.15)', border: '#ffb800' }
+        },
+        shadow: { enabled: true, color: 'rgba(255, 184, 0, 0.35)', size: 20, x: 0, y: 0 },
+        font: { color: '#ffb800', strokeColor: '#010d14' }
+      },
+      case: {
+        shape: 'dot',
+        size: 32,
+        color: {
+          background: 'rgba(138, 92, 246, 0.1)',
+          border: '#a78bfa',
+          highlight: { background: 'rgba(138, 92, 246, 0.25)', border: '#c4b5fd' },
+          hover: { background: 'rgba(138, 92, 246, 0.18)', border: '#a78bfa' }
+        },
+        shadow: { enabled: true, color: 'rgba(138, 92, 246, 0.45)', size: 24, x: 0, y: 0 },
+        font: { color: '#c4b5fd', size: 13, strokeColor: '#010d14' }
+      },
+      org: {
+        shape: 'dot',
+        size: 26,
+        color: {
+          background: 'rgba(6, 182, 212, 0.08)',
+          border: '#22d3ee',
+          highlight: { background: 'rgba(6, 182, 212, 0.22)', border: '#22d3ee' },
+          hover: { background: 'rgba(6, 182, 212, 0.15)', border: '#22d3ee' }
+        },
+        shadow: { enabled: true, color: 'rgba(6, 182, 212, 0.35)', size: 20, x: 0, y: 0 },
+        font: { color: '#22d3ee', strokeColor: '#010d14' }
+      }
+    },
+    interaction: {
+      hover: true,
+      tooltipDelay: 150,
+      hideEdgesOnDrag: false,
+      navigationButtons: false,
+      keyboard: false
+    },
+    physics: {
+      solver: 'forceAtlas2Based',
+      forceAtlas2Based: {
+        gravitationalConstant: -80,
+        centralGravity: 0.01,
+        springLength: 130,
+        springConstant: 0.04,
+        damping: 0.85
+      },
+      stabilization: { iterations: 120, updateInterval: 25 }
+    }
+  };
+  
+  const network = new vis.Network(dashboardNetworkContainer, { nodes: filteredNodes, edges: finalEdges }, options);
+  
+  network.on('click', (params) => {
+    if (params.nodes.length > 0) {
+      const clickedNodeId = params.nodes[0];
+      const nodeData = filteredNodes.find(n => n.id === clickedNodeId);
+      
+      if (dashboardGraphSideTitle) dashboardGraphSideTitle.textContent = `${nodeData.group.toUpperCase()} NODE`;
+      
+      let contentHtml = '';
+      if (nodeData.group === 'case') {
+        const connectedEv = finalEdges.filter(e => e.to === clickedNodeId).map(e => e.from.split(':')[1]);
+        contentHtml = `
+          <div style="margin-bottom:10px;">
+            <div style="color:var(--text-muted); font-size:0.6rem; text-transform:uppercase;">Case Identifier</div>
+            <div style="color:var(--neon-cyan); font-weight:700; margin-top:2px;">${nodeData.label}</div>
+          </div>
+          <div>
+            <div style="color:var(--text-muted); font-size:0.6rem; text-transform:uppercase; margin-bottom:4px;">Linked Evidence Files</div>
+            ${connectedEv.length > 0 ? connectedEv.map(id => `<div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.05); padding:4px 8px; margin-bottom:4px; border-radius:3px;">• ${id}</div>`).join('') : 'No linked evidence found.'}
+          </div>
+        `;
+      } else if (nodeData.group === 'evidence') {
+        const signees = finalEdges.filter(e => e.to === clickedNodeId && e.from.startsWith('officer:')).map(e => e.from.split(':')[1]);
+        const custodians = finalEdges.filter(e => e.from === clickedNodeId && e.to.startsWith('org:')).map(e => e.to.split(':')[1]);
+        
+        contentHtml = `
+          <div style="margin-bottom:10px;">
+            <div style="color:var(--text-muted); font-size:0.6rem; text-transform:uppercase;">Evidence Identifier</div>
+            <div style="color:var(--glow-amber); font-weight:700; margin-top:2px;">${nodeData.label}</div>
+          </div>
+          <div style="margin-bottom:10px;">
+            <div style="color:var(--text-muted); font-size:0.6rem; text-transform:uppercase; margin-bottom:4px;">Submitting Officers</div>
+            ${signees.length > 0 ? [...new Set(signees)].map(id => `👨‍✈️ ${id}`).join('<br>') : 'None'}
+          </div>
+          <div>
+            <div style="color:var(--text-muted); font-size:0.6rem; text-transform:uppercase; margin-bottom:4px;">Custody Pathway</div>
+            ${custodians.length > 0 ? custodians.map(org => `🏢 ${org === 'PoliceDept' ? 'TN Police' : org === 'ForensicLab' ? 'Forensic Lab' : 'Judicial Court'}`).join(' ➔ ') : 'Original Custody'}
+          </div>
+        `;
+      } else if (nodeData.group === 'officer') {
+        const registries = finalEdges.filter(e => e.from === clickedNodeId && e.label === 'registered').map(e => e.to.split(':')[1]);
+        const signs = finalEdges.filter(e => e.from === clickedNodeId && e.label.startsWith('signed')).map(e => e.to.split(':')[1]);
+        
+        contentHtml = `
+          <div style="margin-bottom:10px;">
+            <div style="color:var(--text-muted); font-size:0.6rem; text-transform:uppercase;">Officer ID</div>
+            <div style="color:var(--neon-green); font-weight:700; margin-top:2px;">${nodeData.label}</div>
+          </div>
+          <div style="margin-bottom:10px;">
+            <div style="color:var(--text-muted); font-size:0.6rem; text-transform:uppercase; margin-bottom:4px;">Registries under Case</div>
+            ${registries.length > 0 ? registries.map(id => `📁 Registered: ${id}`).join('<br>') : 'None'}
+          </div>
+          <div>
+            <div style="color:var(--text-muted); font-size:0.6rem; text-transform:uppercase; margin-bottom:4px;">Custody Signatures</div>
+            ${signs.length > 0 ? [...new Set(signs)].map(id => `✔ Signed Transfer: ${id}`).join('<br>') : 'None'}
+          </div>
+        `;
+      } else if (nodeData.group === 'org') {
+        const currentHeld = finalEdges.filter(e => e.to === clickedNodeId && e.label.startsWith('held_by')).map(e => e.from.split(':')[1]);
+        
+        contentHtml = `
+          <div style="margin-bottom:10px;">
+            <div style="color:var(--text-muted); font-size:0.6rem; text-transform:uppercase;">Department Node</div>
+            <div style="color:var(--neon-cyan); font-weight:700; margin-top:2px;">${nodeData.label}</div>
+          </div>
+          <div>
+            <div style="color:var(--text-muted); font-size:0.6rem; text-transform:uppercase; margin-bottom:4px;">Active Evidence Held</div>
+            ${currentHeld.length > 0 ? [...new Set(currentHeld)].map(id => `📁 ${id}`).join('<br>') : 'None'}
+          </div>
+        `;
+      }
+      
+      if (dashboardGraphSideContent) dashboardGraphSideContent.innerHTML = contentHtml;
+    } else {
+      if (dashboardGraphSideTitle) dashboardGraphSideTitle.textContent = "No Node Selected";
+      if (dashboardGraphSideContent) dashboardGraphSideContent.innerHTML = "Click a node in the graph to audit its ledger history details.";
+    }
+  });
+}
+
+// Hook dropdown and button change events
+if (graphCaseSelector) {
+  graphCaseSelector.addEventListener("change", (e) => {
+    renderFilteredGraph(e.target.value);
+  });
+}
+if (refreshGraphBtn) {
+  refreshGraphBtn.addEventListener("click", () => {
+    populateCaseSelector();
+  });
+}
+
